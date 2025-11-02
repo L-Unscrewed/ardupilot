@@ -324,6 +324,29 @@ public:
     // default speed for rtl
     AP_Float rtl_speed;
 
+    // virtual anchor rope length
+    AP_Float virtual_anchor_rope_len;
+
+    // virtual anchor tolerance
+    AP_Float virtual_anchor_tolerance;
+
+    // virtual anchor speed
+    AP_Float virtual_anchor_speed;
+
+    // virtual anchor minimum thrust for heading control
+    AP_Float virtual_anchor_min_thrust;
+
+    // virtual anchor PID proportional gain
+    AP_Float virtual_anchor_pid_p;
+
+    // virtual anchor PID integral gain
+    AP_Float virtual_anchor_pid_i;
+
+    // virtual anchor PID derivative gain
+    AP_Float virtual_anchor_pid_d;
+
+    // virtual anchor PID integrator maximum
+    AP_Float virtual_anchor_pid_imax;
     // frame class for vehicle
     AP_Int8 frame_class;
 

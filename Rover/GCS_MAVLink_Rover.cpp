@@ -565,6 +565,32 @@ MAV_RESULT GCS_MAVLINK_Rover::handle_command_int_packet(const mavlink_command_in
         return handle_command_nav_set_yaw_speed(packet, msg);
 #endif
 
+    case MAV_CMD_DO_SET_VIRTUAL_ANCHOR: {
+        // set virtual anchor point
+        if (!rover.set_mode(rover.mode_virtualanchor, ModeReason::GCS_COMMAND)) {
+            return MAV_RESULT_FAILED;
+        }
+
+        // sanity check location
+        if (!check_latlng(packet.x, packet.y)) {
+            return MAV_RESULT_DENIED;
+        }
+        if (packet.x == 0 && packet.y == 0) {
+            return MAV_RESULT_DENIED;
+        }
+
+        Location requested_location {};
+        if (!location_from_command_t(packet, requested_location)) {
+            return MAV_RESULT_DENIED;
+        }
+
+        if (!rover.mode_virtualanchor.set_anchor_and_navigate(requested_location)) {
+            return MAV_RESULT_FAILED;
+        }
+
+        return MAV_RESULT_ACCEPTED;
+    }
+
     default:
         return GCS_MAVLINK::handle_command_int_packet(packet, msg);
     }
@@ -1040,6 +1066,7 @@ uint8_t GCS_MAVLINK_Rover::send_available_mode(uint8_t index) const
         &rover.mode_rtl,
         &rover.mode_smartrtl,
         &rover.mode_guided,
+        &rover.mode_virtualanchor, //new 
         &rover.mode_initializing,
 #if MODE_DOCK_ENABLED
         (Mode *)rover.g2.mode_dock_ptr,

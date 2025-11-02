@@ -87,6 +87,7 @@ public:
 #if AP_EXTERNAL_CONTROL_ENABLED
     friend class AP_ExternalControl_Rover;
 #endif
+    friend class ModeVirtualAnchor;
     friend class GCS_Rover;
     friend class Mode;
     friend class ModeAcro;
@@ -241,6 +242,7 @@ private:
     ModeAcro mode_acro;
     ModeGuided mode_guided;
     ModeAuto mode_auto;
+    ModeVirtualAnchor mode_virtualanchor;
     ModeLoiter mode_loiter;
     ModeSteering mode_steering;
     ModeRTL mode_rtl;

@@ -1,0 +1,1 @@
+#define AP_AIS_ENABLED 1

@@ -1,0 +1,1381 @@
+================================================================================
+VIRTUAL ANCHOR MODE (VANC) - COMPREHENSIVE TESTING GUIDE
+================================================================================
+
+Document Version: 1.0
+Date: 2025-10-31
+ArduPilot Version: Master Branch
+Vehicle Type: Rover
+
+================================================================================
+TABLE OF CONTENTS
+================================================================================
+
+1. OVERVIEW
+2. PRE-FLIGHT SAFETY CHECKS
+3. PARAMETER CONFIGURATION
+4. SITL SIMULATION TESTING
+5. HARDWARE TESTING PROCEDURES
+6. TEST SCENARIOS
+7. TROUBLESHOOTING
+8. EXPECTED BEHAVIORS
+9. KNOWN LIMITATIONS
+10. EMERGENCY PROCEDURES
+
+================================================================================
+1. OVERVIEW
+================================================================================
+
+The Virtual Anchor (VANC) mode allows a rover to maintain a specific distance
+from a designated waypoint, simulating a vehicle tethered to an anchor point
+by a rope. This mode is useful for:
+
+- Tethered vehicle operations
+- Position holding with drift allowance
+- Search patterns around a point of interest
+- Geofence-like behavior with distance limits
+- Training and simulation scenarios
+
+MODE NUMBER: 17
+MODE SHORT NAME: VANC
+MODE TYPE: Autopilot Mode (requires GPS position)
+
+================================================================================
+2. PRE-FLIGHT SAFETY CHECKS
+================================================================================
+
+CRITICAL SAFETY REQUIREMENTS:
+-----------------------------
+✓ GPS lock with HDOP < 2.0
+✓ EKF status: GOOD (green in GCS)
+✓ Compass calibrated and healthy
+✓ Home position set
+✓ Geofence configured (if required)
+✓ Failsafe settings configured
+✓ RC transmitter with working mode switch
+✓ Emergency MANUAL mode easily accessible
+✓ Clear testing area with known obstacles
+✓ Observer/spotter assigned (recommended)
+
+PARAMETER VERIFICATION:
+-----------------------
+Before testing, verify these parameters are set:
+
+VANC_ROPE_LEN    = 20.0 (or your desired rope length in meters)
+VANC_TOLERANCE   = 2.0  (or your desired tolerance in meters)
+VANC_SPEED       = 1.0  (or your desired max speed in m/s)
+
+Check using GCS:
+- Mission Planner: CONFIG > Full Parameter List
+- MAVProxy: param show VANC_*
+- QGroundControl: Parameters > Search "VANC"
+
+================================================================================
+3. PARAMETER CONFIGURATION
+================================================================================
+
+VANC_ROPE_LEN (Parameter 58)
+-----------------------------
+Description: Maximum distance from virtual anchor point (simulates rope length)
+Units: meters
+Range: 5 to 50 meters
+Default: 20.0 meters
+Increment: 1.0 meter
+
+Recommended values:
+- Small vehicles/testing: 10-15 meters
+- Medium vehicles: 20-30 meters
+- Large vehicles/wide areas: 30-50 meters
+
+VANC_TOLERANCE (Parameter 59)
+------------------------------
+Description: Distance tolerance before corrective action is taken
+Units: meters
+Range: 0.5 to 5 meters
+Default: 2.0 meters
+Increment: 0.1 meter
+
+Recommended values:
+- Tight control: 0.5-1.0 meters (may oscillate on noisy GPS)
+- Normal operation: 1.5-2.5 meters
+- Loose control: 3.0-5.0 meters (for high wind/current)
+
+VANC_SPEED (Parameter 60)
+--------------------------
+Description: Maximum speed when returning to anchor rope length
+Units: meters per second
+Range: 0.1 to 5.0 m/s
+Default: 1.0 m/s
+Increment: 0.1 m/s
+
+Recommended values:
+- Cautious/testing: 0.5-1.0 m/s
+- Normal operation: 1.0-2.0 m/s
+- Aggressive: 2.0-3.0 m/s
+- Max (use with caution): 3.0-5.0 m/s
+
+VANC_MIN_THR (Parameter 61) - NEW FOR AZIMUTH THRUSTERS
+--------------------------------------------------------
+Description: Minimum thrust for heading control when within tolerance band
+Units: meters per second
+Range: 0 to 1.0 m/s
+Default: 0.0 m/s
+Increment: 0.05 m/s
+
+CRITICAL FOR AZIMUTH THRUSTERS:
+Azimuth thrusters (360° rotating thrusters) cannot steer without propulsion.
+Traditional rudder/servo steering works independently of throttle.
+
+Recommended values:
+- Traditional steering (rudder/servo): 0.0 m/s (no minimum thrust needed)
+- Azimuth thrusters: 0.2-0.4 m/s (minimum thrust for heading control)
+- Test and adjust based on thruster response
+
+BEHAVIOR:
+- When set to 0: Motors stop when within tolerance (traditional steering)
+- When > 0: Maintains minimum thrust for heading control (azimuth thrusters)
+
+VANC_PID_P (Parameter 62) - PID PROPORTIONAL GAIN
+--------------------------------------------------
+Description: Proportional gain for distance error correction
+Range: 0.1 to 2.0
+Default: 0.5
+Increment: 0.05
+
+Effect: Higher values = more aggressive position correction
+- Too low: Slow response, may not reach anchor point
+- Too high: Overshoot, oscillation around target
+- Start with 0.5 and adjust based on vehicle dynamics
+
+VANC_PID_I (Parameter 63) - PID INTEGRAL GAIN
+----------------------------------------------
+Description: Integral gain for distance error correction
+Range: 0 to 0.5
+Default: 0.0
+Increment: 0.01
+
+Effect: Compensates for constant drift (current/wind)
+- Start with 0.0 (disabled)
+- Increase gradually if steady-state error occurs
+- Too high: Integrator windup, oscillation, instability
+- Use VANC_PID_IMAX to limit integrator accumulation
+
+VANC_PID_D (Parameter 64) - PID DERIVATIVE GAIN
+------------------------------------------------
+Description: Derivative gain for distance error correction
+Range: 0 to 1.0
+Default: 0.1
+Increment: 0.05
+
+Effect: Reduces overshoot and damping oscillation
+- Too low: Overshoot, slow settling
+- Too high: Noise amplification, jittery response
+- Survey-grade GNSS can use higher D values (less noise)
+
+VANC_PID_IMAX (Parameter 65) - PID INTEGRATOR LIMIT
+----------------------------------------------------
+Description: Maximum integrator value (anti-windup)
+Units: meters per second
+Range: 0 to 2.0 m/s
+Default: 0.5 m/s
+Increment: 0.1 m/s
+
+Effect: Prevents integrator windup in high current/wind
+- Should be less than VANC_SPEED
+- Typical: 25-50% of VANC_SPEED
+- Increase if steady-state error persists
+
+================================================================================
+PID TUNING GUIDE
+================================================================================
+
+INITIAL SETUP (Start Here):
+---------------------------
+VANC_PID_P     = 0.5   (moderate proportional response)
+VANC_PID_I     = 0.0   (disable integral initially)
+VANC_PID_D     = 0.1   (light damping)
+VANC_PID_IMAX  = 0.5   (anti-windup protection)
+VANC_MIN_THR   = 0.3   (if using azimuth thrusters, 0 otherwise)
+
+TUNING PROCEDURE:
+-----------------
+1. P-ONLY TUNING (I=0, D=0.1):
+   - Start with P=0.5
+   - Increase P until system responds well to position errors
+   - If oscillation occurs, reduce P by 20-30%
+   - Goal: Quick response without severe overshoot
+
+2. ADD DERIVATIVE (I still 0):
+   - If oscillation/overshoot occurs, increase D
+   - Typical range: 0.1-0.3 for civilian GPS
+   - With survey-grade GNSS: 0.2-0.5 possible
+   - Goal: Smooth approach, minimal overshoot
+
+3. ADD INTEGRAL (if needed):
+   - Only if steady-state error observed (doesn't reach exact distance)
+   - Start with I=0.01
+   - Increase slowly: 0.01, 0.02, 0.03, etc.
+   - Stop when steady-state error eliminated
+   - Watch for integrator windup!
+   - Goal: Zero steady-state error without instability
+
+4. VERIFY IMAX:
+   - Should be 25-50% of VANC_SPEED
+   - Monitor integrator value in GCS messages
+   - If integrator saturates frequently, increase IMAX
+
+SIGNS OF GOOD TUNING:
+---------------------
+✓ Smooth approach to anchor point
+✓ Minimal overshoot (<10% of tolerance)
+✓ Quick settling time (< 10 seconds)
+✓ Stable hold within tolerance band
+✓ No continuous oscillation
+
+SIGNS OF POOR TUNING:
+---------------------
+✗ Excessive overshoot (shoots past anchor point)
+✗ Oscillation (back and forth continuously)
+✗ Slow response (takes long time to reach anchor)
+✗ Steady-state error (settles outside tolerance)
+✗ Unstable behavior (erratic movements)
+
+ENVIRONMENTAL CONSIDERATIONS:
+-----------------------------
+- High current/wind: Increase I gain, increase IMAX
+- Survey-grade GNSS: Can use higher P and D gains
+- Civilian GPS: Use lower gains, larger tolerance
+- Calm conditions: Lower I gain or keep at 0
+
+TUNING GUIDELINES:
+------------------
+1. Start with conservative values (small rope length, large tolerance, low speed)
+2. Tune PID gains before adjusting other parameters
+3. Set VANC_MIN_THR appropriately for thruster type
+4. Increase rope length to test position holding at greater distances
+5. Decrease tolerance for tighter position control
+6. Increase speed only after verifying stable behavior
+7. Monitor battery consumption - tight tolerance = more motor activity
+8. Monitor integrator value in telemetry logs
+
+================================================================================
+4. SITL SIMULATION TESTING
+================================================================================
+
+STEP 1: BUILD ARDUROVER FOR SITL
+---------------------------------
+cd ~/ardupilot
+./waf configure --board sitl
+./waf build --target bin/ardurover
+
+Expected output: Build successful with bin/ardurover created
+
+STEP 2: LAUNCH SITL SIMULATION
+-------------------------------
+cd ~/ardupilot/Tools/autotest
+./sim_vehicle.py -v Rover --console --map
+
+Wait for:
+- "GPS lock at INIT-1" message
+- EKF healthy
+- Home position set
+
+STEP 3: SET PARAMETERS
+----------------------
+In MAVProxy console:
+
+Basic parameters:
+param set VANC_ROPE_LEN 15.0
+param set VANC_TOLERANCE 2.0
+param set VANC_SPEED 1.0
+
+PID parameters (start with defaults):
+param set VANC_PID_P 0.5
+param set VANC_PID_I 0.0
+param set VANC_PID_D 0.1
+param set VANC_PID_IMAX 0.5
+
+Azimuth thruster support:
+param set VANC_MIN_THR 0.0    (use 0.3 if testing with azimuth thrusters)
+
+param fetch
+
+Verify:
+param show VANC_*
+
+Expected output:
+VANC_MIN_THR     = 0.000000
+VANC_PID_D       = 0.100000
+VANC_PID_I       = 0.000000
+VANC_PID_IMAX    = 0.500000
+VANC_PID_P       = 0.500000
+VANC_ROPE_LEN    = 15.000000
+VANC_SPEED       = 1.000000
+VANC_TOLERANCE   = 2.000000
+
+STEP 4: BASIC FUNCTIONALITY TEST
+---------------------------------
+Test 1: Mode Entry
+------------------
+mode VANC
+Expected: "Virtual Anchor mode entered" message
+Status: Vehicle stops, maintains heading
+
+Test 2: Set Anchor at Current Position
+---------------------------------------
+This requires MAVLink command (see GCS testing below)
+Or use MAVProxy:
+module load rally
+rally add
+
+Test 3: Set Anchor via MAVLink Command
+---------------------------------------
+In GCS (Mission Planner or QGroundControl):
+- Right-click on map at desired anchor location
+- Select "Fly To" or equivalent
+- Set altitude to current altitude
+- Command type: MAV_CMD_DO_SET_VIRTUAL_ANCHOR (custom command 243)
+
+Expected behavior:
+1. Vehicle acknowledges command
+2. "Virtual Anchor: navigating to anchor point" message
+3. Vehicle drives toward anchor point
+4. "Virtual Anchor: reached anchor point" when within tolerance
+5. Vehicle maintains position around anchor (see state machine below)
+
+STEP 5: STATE MACHINE VERIFICATION
+-----------------------------------
+Virtual Anchor operates in 3 states:
+
+STATE 1: IDLE
+-------------
+When: No anchor set
+Behavior: Vehicle stops, maintains heading
+Motors: Throttle = 0, Steering holds heading
+Test: Enter VANC mode, verify vehicle stops
+
+STATE 2: GOTO_ANCHOR
+--------------------
+When: Anchor set and distance > rope_length + tolerance
+Behavior: Navigate to anchor point using waypoint navigation
+Motors: Full waypoint navigation (steering + throttle)
+Speed: Up to VANC_SPEED parameter
+Test: Set anchor far away, verify navigation
+
+STATE 3: ANCHORED
+-----------------
+When: Within rope_length distance of anchor
+Behavior: Maintain distance from anchor within tolerance
+Control zones:
+  - Distance > rope_length + tolerance: Move toward anchor
+  - Distance < rope_length - tolerance: Reverse away from anchor
+  - Within tolerance band: Drift freely (motors off)
+Heading: Always face anchor point
+Test: Let vehicle reach anchor, verify position holding
+
+STEP 6: DISTANCE CONTROL TEST
+------------------------------
+Set anchor 20m away with VANC_ROPE_LEN=15, VANC_TOLERANCE=2
+
+Expected behavior:
+1. Vehicle navigates to ~15m from anchor
+2. If GPS drift pushes beyond 17m: Vehicle moves toward anchor
+3. If GPS drift brings closer than 13m: Vehicle reverses away
+4. Between 13-17m: Vehicle drifts with motors off
+5. Always faces anchor point
+
+Monitor GCS messages:
+"VANC: dist=X.Xm err=X.Xm hdg=XXX"
+- dist: Current distance to anchor
+- err: Distance error (positive=too far, negative=too close)
+- hdg: Bearing to anchor in degrees
+
+STEP 7: EMERGENCY STOP TEST
+----------------------------
+While vehicle is moving toward anchor:
+1. Switch to HOLD mode
+   Expected: Vehicle stops immediately
+2. Switch back to VANC mode
+   Expected: Vehicle resumes VANC behavior (continues to anchor)
+3. Switch to MANUAL mode
+   Expected: Full manual control, VANC state reset
+
+STEP 8: POSITION LOSS TEST
+---------------------------
+Simulate GPS failure while in ANCHORED state:
+param set SIM_GPS_DISABLE 1
+
+Expected behavior:
+- Vehicle stops throttle
+- Maintains last known heading
+- GCS warning messages
+- Failsafe may trigger (depending on FS_EKF_THRESH)
+
+Recovery:
+param set SIM_GPS_DISABLE 0
+Expected: Vehicle resumes ANCHORED behavior
+
+STEP 9: OBJECT AVOIDANCE TEST (If Enabled)
+-------------------------------------------
+Prerequisites:
+- AP_AVOIDANCE_ENABLED = 1 (default in SITL)
+- Proximity sensor configured or fence enabled
+
+Set anchor beyond an obstacle:
+1. Create fence around obstacle area
+2. Set anchor on far side
+3. Switch to VANC mode
+
+Expected: Vehicle navigates around obstacle to reach anchor
+
+STEP 10: REVERSE BEHAVIOR TEST
+-------------------------------
+Critical test for the reverse speed fix!
+
+Setup:
+param set VANC_ROPE_LEN 10.0
+param set VANC_TOLERANCE 1.0
+
+Procedure:
+1. Set anchor 15m away
+2. Enter VANC mode
+3. Let vehicle reach anchor (~10m distance)
+4. Manually drive closer to anchor (switch to MANUAL, drive forward)
+5. Get within 9m of anchor (rope_len - tolerance)
+6. Switch back to VANC mode
+
+Expected behavior:
+- Vehicle should REVERSE away from anchor
+- Monitor GCS: "VANC: dist=X.X err=-X.X" (negative error)
+- Throttle should be negative
+- Vehicle should back away until distance > 9m
+
+If vehicle moves FORWARD instead of REVERSE:
+→ CRITICAL BUG - Do not proceed to hardware testing!
+
+================================================================================
+5. HARDWARE TESTING PROCEDURES
+================================================================================
+
+SAFETY FIRST:
+-------------
+⚠ DO NOT SKIP SITL TESTING
+⚠ Start with large open area (minimum 100m x 100m)
+⚠ Have RC transmitter ready with quick mode switch
+⚠ Test during good weather (low wind, good visibility)
+⚠ Use conservative parameters initially
+⚠ Have a spotter/observer
+⚠ Brief all personnel on emergency procedures
+
+HARDWARE TEST SEQUENCE:
+-----------------------
+
+TEST 1: BENCH TEST
+------------------
+Vehicle on blocks/elevated, wheels free to spin
+
+1. Power on vehicle
+2. Wait for GPS lock and EKF good
+3. Arm vehicle
+4. Switch to VANC mode
+5. Verify: Motors stop, no unexpected movement
+6. Check GCS: Mode shows "VANC"
+7. Disarm vehicle
+
+Expected: No errors, clean mode entry
+
+TEST 2: STATIC MODE ENTRY TEST
+-------------------------------
+Vehicle on ground, plenty of open space
+
+1. Power on, GPS lock, EKF good
+2. Set VANC parameters (conservative values)
+3. Arm vehicle
+4. Switch to VANC mode
+5. Verify vehicle stops and holds position
+6. Monitor for 30 seconds
+7. Switch to MANUAL, disarm
+
+Expected: Vehicle stationary, maintains heading
+
+TEST 3: ANCHOR AT CURRENT LOCATION
+-----------------------------------
+Test setting anchor where vehicle currently is
+
+1. Arm vehicle
+2. Switch to VANC mode
+3. Use GCS to set anchor at current position
+   (MAV_CMD_DO_SET_VIRTUAL_ANCHOR with current lat/lon)
+
+Expected:
+- Vehicle enters ANCHORED state immediately
+- Minimal movement (already at anchor)
+- Maintains position within tolerance
+
+TEST 4: SHORT DISTANCE NAVIGATION
+----------------------------------
+Start with short distances to build confidence
+
+Setup:
+VANC_ROPE_LEN = 10.0
+VANC_TOLERANCE = 2.0
+VANC_SPEED = 0.5 (slow!)
+
+Procedure:
+1. Mark current position (cone, flag, GPS waypoint)
+2. Measure 10m away, mark anchor point
+3. Arm vehicle in MANUAL mode
+4. Switch to VANC mode
+5. Use GCS to set anchor at marked point
+6. Observe navigation
+
+Expected:
+- Vehicle navigates slowly toward anchor point
+- Stops around 10m from anchor
+- Maintains position (may drift within tolerance)
+- Always faces anchor point
+
+Monitor:
+- Speed should not exceed VANC_SPEED parameter
+- Steering should be smooth
+- No oscillations or hunting
+
+TEST 5: TOLERANCE BAND VERIFICATION
+------------------------------------
+Verify vehicle behavior within/outside tolerance band
+
+Setup:
+VANC_ROPE_LEN = 15.0
+VANC_TOLERANCE = 2.0
+
+Procedure:
+1. Let vehicle reach ANCHORED state
+2. Observe for 2-3 minutes
+3. Note when motors activate vs. when they're off
+
+Expected behavior zones:
+- Distance 13-17m: Motors off (drifting)
+- Distance > 17m: Motors on, moving toward anchor
+- Distance < 13m: Motors on, reversing away
+- Always facing anchor
+
+GCS monitoring:
+Watch "VANC: dist=X.X err=X.X" messages
+- err > +2.0: Should see forward movement
+- err < -2.0: Should see reverse movement
+- -2.0 < err < +2.0: Motors should be off
+
+TEST 6: REVERSE BEHAVIOR VALIDATION
+------------------------------------
+CRITICAL HARDWARE TEST
+
+Setup:
+VANC_ROPE_LEN = 10.0
+VANC_TOLERANCE = 1.5
+
+Procedure:
+1. Set anchor 15m away
+2. Enter VANC mode, let vehicle reach anchor
+3. Once stable, switch to MANUAL
+4. Drive vehicle closer to anchor (5-6m away)
+5. Stop, switch back to VANC mode
+6. OBSERVE CAREFULLY
+
+Expected:
+✓ Vehicle should REVERSE (back up) away from anchor
+✓ Rear lights may indicate reverse (if configured)
+✓ Distance should increase
+✓ Vehicle continues until distance > rope_len - tolerance
+
+If vehicle moves FORWARD:
+⚠ CRITICAL FAILURE - STOP TESTING
+⚠ Immediately switch to MANUAL
+⚠ Report bug to development team
+
+TEST 7: LONG DISTANCE NAVIGATION
+---------------------------------
+After successful short distance tests
+
+Setup:
+VANC_ROPE_LEN = 20.0
+VANC_TOLERANCE = 2.0
+VANC_SPEED = 1.5
+
+Procedure:
+1. Set anchor 30-40m away
+2. Enter VANC mode
+3. Observe full navigation sequence
+4. Let vehicle maintain position for 5+ minutes
+
+Monitor:
+- Smooth navigation path
+- Appropriate speed control
+- Clean transition to ANCHORED state
+- Stable position holding
+- Battery consumption
+
+TEST 8: OBSTACLE AVOIDANCE (If Equipped)
+-----------------------------------------
+Only if vehicle has proximity sensors or fence
+
+Setup:
+- Configure proximity sensor parameters
+- Or set up circular fence as "virtual obstacle"
+
+Procedure:
+1. Place obstacle between vehicle and anchor
+2. Set anchor beyond obstacle
+3. Enter VANC mode
+
+Expected:
+- Vehicle detects obstacle
+- Slows down or stops before collision
+- May navigate around if using fence avoidance
+- GCS warning messages about avoidance active
+
+TEST 9: MODE TRANSITIONS
+-------------------------
+Test switching in/out of VANC mode
+
+Sequence:
+1. Start in MANUAL, drive around
+2. Switch to VANC (with anchor set)
+3. Let vehicle navigate halfway to anchor
+4. Switch to HOLD
+5. Wait 10 seconds
+6. Switch back to VANC
+7. Verify vehicle continues to anchor
+8. Switch to RTL
+9. Let vehicle return to home
+10. Switch to VANC
+11. Verify vehicle returns to anchor
+
+Expected: Clean transitions, no errors
+
+TEST 10: EXTENDED DURATION TEST
+--------------------------------
+Final validation test
+
+Setup:
+- Full battery
+- Conservative parameters
+- Good weather
+- Observer present
+
+Procedure:
+1. Set anchor 25m away
+2. Enter VANC mode
+3. Monitor for 20-30 minutes
+4. Observe position holding behavior
+5. Note battery consumption
+6. Check for any drift or anomalies
+
+Expected:
+- Stable operation throughout
+- Position held within tolerance
+- Battery drains gradually
+- No unexpected mode exits
+- No error messages
+
+Data to collect:
+- Battery % at start and end
+- Number of correction movements
+- Max distance error observed
+- Any GCS warnings/errors
+- GPS HDOP during test
+
+================================================================================
+6. TEST SCENARIOS
+================================================================================
+
+SCENARIO A: SEARCH PATTERN ANCHOR POINT
+----------------------------------------
+Use case: Search area around point of interest
+
+Setup:
+VANC_ROPE_LEN = 30.0
+VANC_TOLERANCE = 5.0
+
+Test:
+1. Set anchor at search area center
+2. Enter VANC mode
+3. Switch to GUIDED mode
+4. Use GCS to send guided waypoints in circle around anchor
+5. Switch back to VANC periodically
+
+Expected: Vehicle explores area but never exceeds rope length
+
+SCENARIO B: STATION KEEPING IN WIND/CURRENT
+--------------------------------------------
+Use case: Hold position in dynamic environment
+
+Setup:
+VANC_ROPE_LEN = 15.0
+VANC_TOLERANCE = 3.0
+Test in wind >10 mph
+
+Test:
+1. Set anchor at current position
+2. Enter VANC mode
+3. Observe position holding with wind
+
+Expected:
+- Vehicle counters wind/current
+- Position maintained within tolerance
+- May drift within deadband
+- Faces anchor (may not be into wind)
+
+SCENARIO C: TETHERED OPERATION SIMULATION
+------------------------------------------
+Use case: Simulate physical tether constraints
+
+Setup:
+VANC_ROPE_LEN = 20.0
+VANC_TOLERANCE = 1.0
+
+Test:
+1. Set anchor point
+2. Enter VANC mode
+3. Use MANUAL mode to try to drive beyond rope length
+4. Switch back to VANC
+
+Expected:
+- Vehicle pulled back to rope length
+- Acts like physical tether constraint
+
+SCENARIO D: MULTI-ANCHOR MISSION
+---------------------------------
+Use case: Sequential anchor points
+
+Test:
+1. Set anchor point A, let vehicle reach it
+2. Set new anchor point B, observe transition
+3. Set anchor point C, observe transition
+
+Expected:
+- Vehicle navigates to each new anchor
+- Clean transitions between anchor points
+- No position overshoot
+
+SCENARIO E: FAILSAFE RECOVERY
+------------------------------
+Use case: GPS temporary loss recovery
+
+Setup:
+- Configure GPS failsafe: FS_EKF_THRESH = 0.8
+
+Test:
+1. Vehicle in ANCHORED state
+2. Simulate GPS degradation (cover GPS antenna briefly)
+3. Observe failsafe trigger
+4. Remove obstruction, GPS recovers
+
+Expected:
+- Vehicle stops when GPS fails
+- Maintains heading
+- Resumes ANCHORED behavior when GPS recovers
+- No crash or unexpected movement
+
+================================================================================
+7. TROUBLESHOOTING
+================================================================================
+
+ISSUE: Vehicle doesn't enter VANC mode
+---------------------------------------
+Symptoms: Mode switch fails, reverts to previous mode
+
+Check:
+□ GPS lock achieved (3D fix, HDOP < 2.0)
+□ EKF status is GOOD
+□ Home position is set
+□ Vehicle is armable
+□ No pre-arm check failures
+
+Solution:
+- Wait for GPS lock
+- Check EKF status in GCS
+- Verify compass calibration
+- Check parameter AHRS_EKF_TYPE
+
+ISSUE: Vehicle doesn't move toward anchor
+------------------------------------------
+Symptoms: Enters VANC mode but stays stationary
+
+Check:
+□ Anchor point actually set (check GCS messages)
+□ Distance to anchor > rope_length + tolerance
+□ Motors not disabled (MOT_* parameters)
+□ Throttle not limited (THR_MIN, THR_MAX)
+□ Not in IDLE state (anchor not set)
+
+Solution:
+- Verify anchor set with MAVLink command
+- Check distance: must be outside tolerance band
+- Test motors in MANUAL mode
+- Check throttle parameters
+
+ISSUE: Vehicle oscillates around anchor
+----------------------------------------
+Symptoms: Continuous back-and-forth movement
+
+Check:
+□ VANC_TOLERANCE too small (< 1.0m with noisy GPS)
+□ VANC_SPEED too high
+□ GPS HDOP > 2.0 (noisy GPS)
+□ Aggressive attitude control tuning
+
+Solution:
+- Increase VANC_TOLERANCE (try 2.5-3.0m)
+- Decrease VANC_SPEED (try 0.5-1.0 m/s)
+- Wait for better GPS conditions
+- Review attitude control PIDs
+
+ISSUE: Vehicle doesn't face anchor
+-----------------------------------
+Symptoms: Random heading while in ANCHORED state
+
+Check:
+□ Compass calibration
+□ Compass health
+□ Magnetic interference
+□ AHRS parameters
+
+Solution:
+- Recalibrate compass
+- Check compass health in GCS
+- Move away from metal/electrical interference
+- Review COMPASS_* parameters
+
+ISSUE: Vehicle moves FORWARD when should reverse
+-------------------------------------------------
+Symptoms: Gets closer to anchor instead of backing away
+
+⚠ CRITICAL BUG INDICATOR
+
+Check:
+□ Firmware version (ensure fixes applied)
+□ Compile date (should be after 2025-10-31)
+
+Solution:
+- DO NOT FLY - potential safety issue
+- Rebuild from latest source
+- Verify calc_throttle() fix in mode_virtualanchor.cpp:153
+- Report to developers if issue persists
+
+ISSUE: "No position available" errors
+--------------------------------------
+Symptoms: GCS shows position errors
+
+Check:
+□ GPS satellite count (need 6+ satellites)
+□ GPS HDOP (should be < 2.0)
+□ EKF variance
+□ Compass heading valid
+
+Solution:
+- Move to clear sky area
+- Wait for more satellites
+- Check GPS antenna connection
+- Reset EKF: EKF_ENABLE = 0, reboot, EKF_ENABLE = 1
+
+ISSUE: High battery consumption
+--------------------------------
+Symptoms: Battery drains quickly in VANC mode
+
+Check:
+□ VANC_TOLERANCE very small (constant correction)
+□ High wind/current environment
+□ Aggressive tuning (high speed, tight tolerance)
+□ Vehicle weight vs. motor capability
+
+Solution:
+- Increase VANC_TOLERANCE (reduce correction frequency)
+- Test in calmer conditions
+- Use more conservative parameters
+- Check vehicle weight and motor sizing
+
+ISSUE: GCS shows wrong navigation data
+---------------------------------------
+Symptoms: Bearing, crosstrack error look wrong
+
+Check:
+□ Firmware version (should have override methods)
+□ Anchor point set correctly
+□ GPS position valid
+
+Solution:
+- Verify firmware includes wp_bearing(), nav_bearing() overrides
+- Check anchor location in GCS
+- Verify get_bearing_to_anchor() returns valid data
+
+ISSUE: Vehicle enters failsafe unexpectedly
+--------------------------------------------
+Symptoms: Switches to RTL or HOLD during VANC
+
+Check:
+□ Battery failsafe settings
+□ GPS failsafe settings
+□ GCS failsafe settings
+□ Radio failsafe settings
+
+Solution:
+- Review FS_* parameters
+- Check battery voltage isn't too low
+- Ensure RC link is solid
+- Verify GCS heartbeat
+
+================================================================================
+8. EXPECTED BEHAVIORS
+================================================================================
+
+NORMAL OPERATION:
+-----------------
+
+Mode Entry:
+✓ GCS message: "Virtual Anchor mode entered"
+✓ Vehicle stops throttle
+✓ Maintains current heading
+✓ State = IDLE
+
+Setting Anchor (far away):
+✓ GCS message: "Virtual Anchor set X.Xm away"
+✓ GCS message: "Virtual Anchor: navigating to anchor point"
+✓ State = GOTO_ANCHOR
+✓ Vehicle navigates toward anchor
+✓ Speed ≤ VANC_SPEED parameter
+✓ Heading toward anchor
+
+Reaching Anchor:
+✓ GCS message: "Virtual Anchor: reached anchor point"
+✓ State = ANCHORED
+✓ Vehicle stops within rope_length distance
+✓ Heading faces anchor
+
+Position Holding:
+✓ Periodic messages: "VANC: dist=X.Xm err=X.Xm hdg=XXX"
+✓ Within tolerance: Motors off, drifts freely
+✓ Beyond tolerance (too far): Moves toward anchor
+✓ Beyond tolerance (too close): Reverses away from anchor
+✓ Always faces anchor point
+
+Mode Exit:
+✓ Clean transition to new mode
+✓ No errors logged
+✓ Vehicle responds to new mode immediately
+
+ABNORMAL OPERATION (Errors):
+-----------------------------
+
+Position Loss:
+⚠ Vehicle stops throttle
+⚠ Maintains last heading
+⚠ May trigger GPS failsafe
+⚠ GCS warning: "Virtual Anchor: No position available"
+
+Anchor Set Failure:
+⚠ GCS warning: "Virtual Anchor: Failed to set anchor"
+⚠ Remains in IDLE state
+⚠ Vehicle stationary
+
+Navigation Failure:
+⚠ Vehicle may stop
+⚠ Check wp_nav errors
+⚠ Possible EKF issues
+
+Excessive Error:
+⚠ If distance error > rope_length: May indicate GPS issue
+⚠ If constant oscillation: Tuning needed
+
+================================================================================
+9. KNOWN LIMITATIONS
+================================================================================
+
+1. GPS DEPENDENCY
+-----------------
+Virtual Anchor mode REQUIRES:
+- GPS 3D fix with 6+ satellites
+- HDOP < 2.0 (preferably < 1.5)
+- EKF status: GOOD
+- Position estimate available
+
+Cannot operate with:
+✗ Dead reckoning only
+✗ Poor GPS (HDOP > 3.0)
+✗ Indoor environments
+✗ GPS-denied areas
+
+2. POSITION ACCURACY
+--------------------
+Position holding accuracy limited by:
+- GPS accuracy (typically 1-5m civilian GPS)
+- HDOP value
+- Multipath errors
+- Atmospheric conditions
+
+For sub-meter accuracy:
+- Use RTK GPS (if available)
+- Reduce VANC_TOLERANCE accordingly
+- Test in good GPS conditions
+
+3. DYNAMIC ENVIRONMENTS
+-----------------------
+Performance may degrade in:
+- High wind (>15 mph) - increase tolerance
+- Water current (boats) - increase tolerance
+- Slippery surfaces (snow, ice) - increase tolerance
+- Steep slopes - may not hold position
+
+4. OBSTACLE AVOIDANCE
+---------------------
+Object avoidance only works if:
+- AP_AVOIDANCE_ENABLED = 1 (compile time)
+- Proximity sensor configured
+- Or geofence active
+
+Without avoidance:
+⚠ Vehicle will attempt to drive through obstacles to reach anchor
+⚠ Manual intervention may be required
+
+5. SPEED LIMITATIONS
+--------------------
+Maximum approach speed limited by:
+- VANC_SPEED parameter (user set)
+- WP_SPEED parameter (global waypoint speed)
+- Cruise speed settings
+- Motor/throttle limits
+
+Actual speed may be less than VANC_SPEED due to:
+- Terrain
+- Incline
+- Vehicle weight
+- Battery voltage
+
+6. ANCHOR DISTANCE LIMITS
+--------------------------
+Practical rope length limits:
+- Minimum: 5m (parameter limit)
+- Maximum: 50m (parameter limit)
+- Recommended: 10-30m for most applications
+
+Very short rope lengths (<5m):
+✗ May oscillate due to GPS noise
+✗ Difficult to tune
+
+Very long rope lengths (>50m):
+✗ May take long time to return to anchor
+✗ Reduced position accuracy at distance
+
+7. MODE INTERACTIONS
+--------------------
+Switching modes during operation:
+✓ VANC → MANUAL: Clean exit, full manual control
+✓ VANC → HOLD: Vehicle stops, can resume VANC
+✓ VANC → RTL: Returns home, VANC state reset
+✓ VANC → AUTO: Follows mission, VANC state reset
+
+⚠ Anchor point is NOT saved between mode switches
+⚠ Re-entering VANC requires setting anchor again
+
+8. TERRAIN FOLLOWING
+--------------------
+Virtual Anchor does NOT:
+✗ Follow terrain height
+✗ Adjust for altitude changes
+✗ Consider 3D distance (only 2D horizontal)
+
+On slopes:
+- Vehicle maintains 2D distance from anchor
+- May be on slope while anchor is flat
+- Heading always faces anchor (2D bearing)
+
+9. BATTERY CONSIDERATIONS
+--------------------------
+Battery drain factors:
+- Small tolerance = frequent corrections = higher drain
+- High winds = constant corrections = higher drain
+- Aggressive speed = higher momentary drain
+- Vehicle weight and efficiency
+
+Recommendations:
+- Size battery for expected hold time + reserve
+- Monitor battery voltage throughout test
+- Configure battery failsafe appropriately
+
+10. LOGGING AND TELEMETRY
+--------------------------
+GCS messages are periodic (every 1 second):
+- High frequency updates not logged
+- Some rapid corrections may not be visible in GCS
+- Dataflash logs capture full detail
+
+For detailed analysis:
+- Use dataflash logs (MODE, CTUN, NTUN messages)
+- Post-flight review in Mission Planner
+- Graph distance vs time, speed vs time
+
+================================================================================
+10. EMERGENCY PROCEDURES
+================================================================================
+
+EMERGENCY STOP:
+---------------
+If vehicle behaves unexpectedly:
+
+IMMEDIATE ACTION:
+1. Switch to MANUAL mode (use RC transmitter mode switch)
+2. Stop throttle (center throttle stick)
+3. If necessary, DISARM vehicle
+4. DO NOT attempt to fly/drive further until issue diagnosed
+
+If RC link lost:
+1. Vehicle should trigger RC failsafe (RTL or HOLD)
+2. Ensure FS_THR_ENABLE configured correctly
+3. If GCS available, command mode change via GCS
+
+VEHICLE RUNAWAY:
+----------------
+If vehicle accelerates unexpectedly or drives wrong direction:
+
+1. IMMEDIATELY switch to MANUAL mode
+2. Center all sticks (neutral)
+3. DISARM if possible
+4. DO NOT re-arm until issue diagnosed
+5. Check logs for cause
+6. Report to development team if bug suspected
+
+COLLISION IMMINENT:
+-------------------
+If vehicle driving toward obstacle:
+
+1. Switch to MANUAL or HOLD mode
+2. Take manual control or stop
+3. Assess situation
+4. If VANC mode anchor behind obstacle:
+   - Set new anchor in safe location
+   - Or switch to different mode
+
+GPS FAILURE:
+------------
+If GPS fails during operation:
+
+Symptoms:
+- "No position available" messages
+- Vehicle stops
+- EKF errors
+
+Action:
+1. Vehicle should stop automatically
+2. GPS failsafe may trigger (RTL/HOLD)
+3. If GPS doesn't recover:
+   - Switch to MANUAL mode
+   - Drive to safe location
+   - Land/stop
+   - Investigate GPS issue
+
+Recovery:
+- Wait for GPS recovery
+- Check satellite count
+- Move to clear sky view
+- Check GPS antenna
+
+COMPASS FAILURE:
+----------------
+If compass fails:
+
+Symptoms:
+- Erratic heading
+- Vehicle spins or drives wrong direction
+- Compass health warnings
+
+Action:
+1. Switch to MANUAL mode
+2. Disable compass (if necessary for safe manual operation)
+3. Return to start location manually
+4. Recalibrate compass before next flight
+
+EKF FAILURE:
+------------
+If Extended Kalman Filter fails:
+
+Symptoms:
+- "EKF variance" errors
+- Position jumps
+- Unstable behavior
+
+Action:
+1. Switch to MANUAL mode immediately
+2. Manually control to safe stop
+3. Disarm
+4. Investigate cause (GPS, compass, vibration)
+5. May need EKF reset or parameter tuning
+
+BATTERY CRITICAL:
+-----------------
+If battery reaches failsafe level:
+
+Expected behavior:
+1. Battery failsafe triggers (usually RTL)
+2. Vehicle returns to home
+3. May land/disarm at home
+
+If RTL not desired:
+- Manually switch to MANUAL mode
+- Drive to nearby safe location
+- Land immediately
+- DO NOT attempt to resume VANC operation
+
+LOST VEHICLE:
+-------------
+If vehicle drives out of sight or telemetry lost:
+
+Prevention:
+✓ Always maintain visual line of sight (if regulations require)
+✓ Use RC model finder/beeper if available
+✓ Set geofence to limit range
+✓ Configure telemetry failsafe
+
+If lost:
+1. Check last known position in GCS
+2. Listen for motor sounds
+3. Use GPS coordinates to navigate to vehicle
+4. If RC link available, switch to HOLD or RTL
+5. Vehicle may trigger battery failsafe eventually
+
+FIRMWARE PANIC/WATCHDOG:
+------------------------
+If vehicle becomes unresponsive or reboots:
+
+Symptoms:
+- Complete loss of control
+- Telemetry dropout
+- Vehicle stops
+
+Action:
+1. Wait for reboot (if auto-reboot enabled)
+2. Manually power cycle if needed
+3. DO NOT attempt to re-arm until logs reviewed
+4. Download dataflash logs
+5. Check for hardware issues
+6. Report to developers if firmware bug suspected
+
+POST-INCIDENT CHECKLIST:
+------------------------
+After any emergency:
+
+□ Download and save all logs (dataflash and telemetry)
+□ Document what happened (write detailed notes)
+□ Note vehicle state at time of incident
+□ Record any error messages
+□ Check hardware for damage
+□ Review parameters for misconfiguration
+□ Do NOT fly again until root cause identified
+□ Consult ArduPilot forums/developers if needed
+
+================================================================================
+DATA COLLECTION FOR BUG REPORTS
+================================================================================
+
+If you encounter a bug or unexpected behavior, collect:
+
+REQUIRED INFORMATION:
+---------------------
+□ Dataflash log (.bin file from SD card)
+□ Telemetry log (.tlog from GCS)
+□ ArduPilot version (git hash if building from source)
+□ Vehicle type and configuration
+□ Parameter file (full parameter list)
+□ Detailed description of issue
+□ Steps to reproduce
+□ Expected vs. actual behavior
+
+HELPFUL INFORMATION:
+--------------------
+□ Video of incident (if available)
+□ GPS HDOP at time of issue
+□ Battery voltage at time of issue
+□ Wind conditions
+□ Terrain type
+□ Previous successful tests (if any)
+
+WHERE TO REPORT:
+----------------
+ArduPilot Discourse: https://discuss.ardupilot.org/
+GitHub Issues: https://github.com/ArduPilot/ardupilot/issues
+Include [Rover] and [VANC] in title
+
+================================================================================
+TESTING SIGN-OFF CHECKLIST
+================================================================================
+
+Before deploying Virtual Anchor mode to operational use, ensure:
+
+SITL SIMULATION:
+□ All SITL tests completed successfully
+□ Reverse behavior verified in simulation
+□ Object avoidance tested (if applicable)
+□ Mode transitions tested
+□ Parameter tuning completed
+
+HARDWARE TESTING:
+□ Bench test completed
+□ Static mode entry test completed
+□ Short distance navigation test completed
+□ Tolerance band verification completed
+□ Reverse behavior validated on hardware
+□ Long distance navigation completed
+□ Extended duration test completed (20+ minutes)
+
+SAFETY VERIFICATION:
+□ Emergency procedures reviewed and understood
+□ RC mode switch configured and tested
+□ Failsafe parameters configured and tested
+□ Battery monitoring configured
+□ Geofence configured (if required)
+□ Observer/spotter briefed on procedures
+
+DOCUMENTATION:
+□ Parameter values documented
+□ Test results logged
+□ Any issues documented
+□ Flight/drive logs saved
+□ Lessons learned recorded
+
+SIGN-OFF:
+---------
+Tester Name: _______________________
+Date: _______________________
+Vehicle ID: _______________________
+Firmware Version: _______________________
+
+Operational Approval: YES / NO
+
+Notes:
+________________________________________________________________________
+________________________________________________________________________
+________________________________________________________________________
+
+================================================================================
+REVISION HISTORY
+================================================================================
+
+Version 1.0 - 2025-10-31
+- Initial release
+- Complete testing procedures documented
+- Emergency procedures added
+- Based on fixes implemented 2025-10-31:
+  * Reverse speed bug fix
+  * Object avoidance enabled
+  * Steering helper function usage
+  * Mode override methods added
+  * GOTO_ANCHOR wp_nav integration
+
+================================================================================
+END OF DOCUMENT
+================================================================================
+
+For questions, support, or bug reports:
+- ArduPilot Discourse: https://discuss.ardupilot.org/
+- ArduPilot Wiki: https://ardupilot.org/rover/
+- GitHub: https://github.com/ArduPilot/ardupilot
+
+Safe testing and happy autonomous roving!

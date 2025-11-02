@@ -155,7 +155,7 @@ const AP_Param::Info Rover::var_info[] = {
 
     // @Param: MODE1
     // @DisplayName: Mode1
-    // @Values: 0:Manual,1:Acro,3:Steering,4:Hold,5:Loiter,6:Follow,7:Simple,8:Dock,9:Circle,10:Auto,11:RTL,12:SmartRTL,15:Guided
+    // @Values: 0:Manual,1:Acro,3:Steering,4:Hold,5:Loiter,6:Follow,7:Simple,8:Dock,9:Circle,10:Auto,11:RTL,12:SmartRTL,15:Guided,17:VirtualAnchor
     // @User: Standard
     // @Description: Driving mode for switch position 1 (910 to 1230 and above 2049)
     GSCALAR(mode1,           "MODE1",         (int8_t)Mode::Number::MANUAL),
@@ -632,6 +632,75 @@ const AP_Param::GroupInfo ParametersG2::var_info[] = {
     // @Group: CIRC
     // @Path: mode_circle.cpp
     AP_SUBGROUPINFO(mode_circle, "CIRC", 57, ParametersG2, ModeCircle),
+
+    // @Param: VANC_ROPE_LEN
+    // @DisplayName: Virtual Anchor Rope Length
+    // @Description: Maximum distance from virtual anchor point in meters (simulates anchor rope length)
+    // @Units: m
+    // @Range: 5 50
+    // @Increment: 1
+    // @User: Standard
+    AP_GROUPINFO("VANC_ROPE_LEN", 32, ParametersG2, virtual_anchor_rope_len, 20.0f),
+
+    // @Param: VANC_TOLERANCE
+    // @DisplayName: Virtual Anchor Distance Tolerance
+    // @Description: Distance tolerance before corrective action is taken
+    // @Units: m
+    // @Range: 0.5 5
+    // @Increment: 0.1
+    // @User: Standard
+    AP_GROUPINFO("VANC_TOLERANCE", 33, ParametersG2, virtual_anchor_tolerance, 2.0f),
+
+    // @Param: VANC_SPEED
+    // @DisplayName: Virtual Anchor Correction Speed
+    // @Description: Maximum speed when returning to anchor rope length
+    // @Units: m/s
+    // @Range: 0.1 5
+    // @Increment: 0.1
+    // @User: Standard
+    AP_GROUPINFO("VANC_SPEED", 34, ParametersG2, virtual_anchor_speed, 1.0f),
+
+    // @Param: VANC_MIN_THR
+    // @DisplayName: Virtual Anchor Minimum Thrust
+    // @Description: Minimum thrust for heading control with azimuth thrusters when within tolerance. Set to 0 for traditional steering systems, 0.2-0.4 for azimuth thrusters
+    // @Units: m/s
+    // @Range: 0 1.0
+    // @Increment: 0.05
+    // @User: Standard
+    AP_GROUPINFO("VANC_MIN_THR", 35, ParametersG2, virtual_anchor_min_thrust, 0.0f),
+
+    // @Param: VANC_PID_P
+    // @DisplayName: Virtual Anchor PID Proportional Gain
+    // @Description: Proportional gain for distance error correction. Higher values = more aggressive position correction
+    // @Range: 0.1 2.0
+    // @Increment: 0.05
+    // @User: Standard
+    AP_GROUPINFO("VANC_PID_P", 36, ParametersG2, virtual_anchor_pid_p, 0.5f),
+
+    // @Param: VANC_PID_I
+    // @DisplayName: Virtual Anchor PID Integral Gain
+    // @Description: Integral gain for distance error correction. Compensates for constant drift (current/wind). Start with 0 and increase if steady-state error occurs
+    // @Range: 0 0.5
+    // @Increment: 0.01
+    // @User: Standard
+    AP_GROUPINFO("VANC_PID_I", 37, ParametersG2, virtual_anchor_pid_i, 0.0f),
+
+    // @Param: VANC_PID_D
+    // @DisplayName: Virtual Anchor PID Derivative Gain
+    // @Description: Derivative gain for distance error correction. Reduces overshoot and oscillation. Increase if position oscillates
+    // @Range: 0 1.0
+    // @Increment: 0.05
+    // @User: Standard
+    AP_GROUPINFO("VANC_PID_D", 39, ParametersG2, virtual_anchor_pid_d, 0.1f),
+
+    // @Param: VANC_PID_IMAX
+    // @DisplayName: Virtual Anchor PID Integrator Maximum
+    // @Description: Maximum integrator value in m/s. Prevents integrator windup
+    // @Units: m/s
+    // @Range: 0 2.0
+    // @Increment: 0.1
+    // @User: Standard
+    AP_GROUPINFO("VANC_PID_IMAX", 41, ParametersG2, virtual_anchor_pid_imax, 0.5f),
 
     AP_GROUPEND
 };

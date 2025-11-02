@@ -28,6 +28,7 @@ public:
         SMART_RTL    = 12,
         GUIDED       = 15,
         INITIALISING = 16,
+	VIRTUALANCHOR = 17, //Virtual Anchor attempt
         // Mode number 30 reserved for "offboard" for external/lua control.
     };
 
@@ -924,3 +925,54 @@ protected:
     bool _loitering = false; // true if we are loitering after mission completion
 };
 #endif
+
+class ModeVirtualAnchor : public Mode
+{
+public:
+    Number mode_number() const override { return Number::VIRTUALANCHOR; }
+    const char *name4() const override { return "VANC"; }
+
+    void update() override;
+    bool get_desired_location(Location& destination) const override WARN_IF_UNUSED;
+
+    // attributes of the mode
+    bool is_autopilot_mode() const override { return true; }
+
+    // return heading (in degrees) and cross track error (in meters) for reporting to ground station (NAV_CONTROLLER_OUTPUT message)
+    float wp_bearing() const override;
+    float nav_bearing() const override;
+    float crosstrack_error() const override;
+
+    bool set_anchor_point(const Location &loc);
+    bool set_anchor_and_navigate(const Location &loc);
+    bool set_anchor_here();
+
+protected:
+    bool _enter() override;
+
+private:
+    enum class e_VIRTUAL_ANCHOR_STATE {
+        IDLE,
+        GOTO_ANCHOR,
+        ANCHORED
+    };
+
+    e_VIRTUAL_ANCHOR_STATE virtual_anchor_state;
+
+    Vector2p anchor_point_NE;
+    Location anchor_location;
+    bool anchor_is_set;
+    uint32_t anchor_set_time_ms;
+
+    // PID controller state
+    float _pid_integrator;          // PID integrator accumulator
+    float _pid_last_error;          // Last distance error for derivative calculation
+    uint32_t _pid_last_update_ms;   // Last PID update timestamp for dt calculation
+    uint32_t _last_log_ms;          // Last status log timestamp
+
+    void calculate_anchor_control();
+    float get_distance_to_anchor() const;
+    float get_bearing_to_anchor() const;
+    void reset_pid();               // Reset PID controller state
+};
+
