@@ -10,7 +10,7 @@ import math
 
 # Connect to SITL
 print("Connecting to SITL...")
-master = mavutil.mavlink_connection('udp:127.0.0.1:14550')
+master = mavutil.mavlink_connection('tcp:127.0.0.1:5760')
 master.wait_heartbeat()
 print("Connected! System ID:", master.target_system)
 
@@ -64,18 +64,20 @@ time.sleep(1)
 
 # Send MAV_CMD_DO_SET_VIRTUAL_ANCHOR command
 print("Setting virtual anchor point...")
-master.mav.command_long_send(
+master.mav.command_int_send(
     master.target_system,
     master.target_component,
+    mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT,  # frame
     243,  # MAV_CMD_DO_SET_VIRTUAL_ANCHOR
-    0,    # confirmation
+    0,    # current (0=not current waypoint)
+    0,    # autocontinue
     0,    # param1 (unused)
     0,    # param2 (unused)
     0,    # param3 (unused)
     0,    # param4 (unused)
-    int(anchor_lat * 1e7),  # param5: latitude
-    int(anchor_lon * 1e7),  # param6: longitude
-    anchor_alt              # param7: altitude
+    int(anchor_lat * 1e7),  # x: latitude in 1e7 degrees
+    int(anchor_lon * 1e7),  # y: longitude in 1e7 degrees
+    anchor_alt              # z: altitude
 )
 
 # Wait for command ACK
